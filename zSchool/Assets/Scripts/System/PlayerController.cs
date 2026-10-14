@@ -4,6 +4,9 @@ using UnityEngine.InputSystem;
 
 public class PlayerController : MonoBehaviour
 {
+    // 적 충돌 피해 및 무적 시간
+    private bool isInvincible = false;
+    public float invincibleDuration = 1f;
     public float moveSpeed = 5f;
     public float jumpPower = 5f;
     public float gravity = -20f;
@@ -35,6 +38,28 @@ public class PlayerController : MonoBehaviour
 
     // 분필 기본 스케일 (X:0.15, Y:0.2, Z:0.15)
     private readonly Vector3 baseChalkScale = new Vector3(0.15f, 0.2f, 0.15f);
+    
+
+    // 적과 충돌했을 때 HP 감소
+    private void OnControllerColliderHit(ControllerColliderHit hit)
+    {
+        if (hit.gameObject.CompareTag("Monster") && !isInvincible)
+        {
+            TakeDamage(1);
+            StartCoroutine(InvincibilityCoroutine());
+        }
+    }
+
+    // 피해를 받은 후 일정 시간 무적
+    private System.Collections.IEnumerator InvincibilityCoroutine()
+    {
+        isInvincible = true;
+
+        yield return new WaitForSeconds(invincibleDuration);
+
+        isInvincible = false;
+    }
+
 
     void Start()
     {
