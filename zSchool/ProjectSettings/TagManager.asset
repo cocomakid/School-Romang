@@ -5,6 +5,8 @@ TagManager:
   serializedVersion: 3
   tags:
   - Monster
+  - Ground
+  - Wall
   layers:
   - Default
   - TransparentFX
@@ -12,7 +14,7 @@ TagManager:
   - Monster
   - Water
   - UI
-  - 
+  - Player
   - 
   - 
   - 
