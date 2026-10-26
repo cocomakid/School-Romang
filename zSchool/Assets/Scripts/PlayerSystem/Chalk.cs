@@ -223,14 +223,14 @@ public class Chalk : MonoBehaviour
         if (col != null)
         {
             col.isTrigger = false;
-        }
+        }   
     }
 
     public bool CanPickUp() => !isThrown;
 
     private void OnDestroy()
     {
-        PlayerController player = FindObjectOfType<PlayerController>();
+        PlayerController player = FindObjectOfType<PlayerController>(); 
         if (player != null)
         {
             player.Invoke(nameof(PlayerController.CheckAndRefillChalks), 0.05f);

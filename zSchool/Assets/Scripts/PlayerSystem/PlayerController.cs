@@ -32,15 +32,34 @@ public class PlayerController : MonoBehaviour
 
     [Header("Chalk Spawn Settings")]
     public Transform[] spawnPoints;
-
     [SerializeField] private Image[] chalkSlots = new Image[3];
     private int[] slotDamages = new int[3];
-
-    // 분필 기본 스케일 (X:0.15, Y:0.2, Z:0.15)
     private readonly Vector3 baseChalkScale = new Vector3(0.15f, 0.2f, 0.15f);
-    
 
-    // 적과 충돌했을 때 HP 감소
+    [Header("Camera Offset Settings")]
+    public Vector3 cameraOffset = new Vector3(0.68f, 0f, -2.5f);
+
+    // ==========================================
+    // ⚔️ [검 & 방패 전투 시스템 설정]
+    // ==========================================
+    [Header("Weapon & Shield Settings")]
+    public Transform swordTransform;
+    public Transform rightHandPoint;       // 오른손 검 위치
+    public Transform leftHandPoint;        // 왼손 방패 위치
+    public float swordAttackRange = 2.5f;   // 검 사거리
+    public int swordDamage = 3;            // 검 데미지
+    public float attackCooldown = 1.0f;    // 다음 공격까지의 쿨타임
+    public float attackDelay = 1.0f;       // 검 휘두르기 딜레이 (1초)
+    private float lastAttackTime;
+    private bool isAttacking = false;      // 공격 중 여부
+
+    [Header("Guard State")]
+    public bool isBlocking = false;        // 현재 방어 상태 여부
+    [Range(0f, 1f)]
+    public float guardDamageReduction = 1.0f; // 방어 시 데미지 감쇄율 (1.0 = 100% 무효화)
+
+
+    // 적과 피지컬 충돌 시 (선택사항)
     private void OnControllerColliderHit(ControllerColliderHit hit)
     {
         if (hit.gameObject.CompareTag("Monster") && !isInvincible)
@@ -50,16 +69,12 @@ public class PlayerController : MonoBehaviour
         }
     }
 
-    // 피해를 받은 후 일정 시간 무적
     private System.Collections.IEnumerator InvincibilityCoroutine()
     {
         isInvincible = true;
-
         yield return new WaitForSeconds(invincibleDuration);
-
         isInvincible = false;
     }
-
 
     void Start()
     {
@@ -69,14 +84,11 @@ public class PlayerController : MonoBehaviour
         hp = currentHp;
         UpdateHearts();
 
-        // 시작 시 슬롯 비우기
         for (int i = 0; i < slotDamages.Length; i++)
         {
             slotDamages[i] = 0;
         }
         UpdateChalkUI();
-
-        // 시작 시 맵에 분필 2개 스폰
         SpawnWorldChalks(2);
     }
 
@@ -87,20 +99,35 @@ public class PlayerController : MonoBehaviour
         if (value.isPressed && controller.isGrounded) verticalVelocity = jumpPower;
     }
 
-    // 💡 [카메라 설정 변수 추가]
-    [Header("Camera Offset Settings")]
-    public Vector3 cameraOffset = new Vector3(0.68f, 0f, -2.5f); // 숄더뷰 우측 오프셋 지정 (X: 0.68, Y: 0, Z: -2.5)
-
     void Update()
     {
+        // ⚔️ [마우스 좌클릭 : 검 휘두르기 공격 (방패 막기 중이거나 공격 중일 때는 불가)]
+        if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame)
+        {
+            if (!isAttacking && !isBlocking && Time.time >= lastAttackTime + attackCooldown)
+            {
+                StartCoroutine(SwordAttackRoutine());   
+            }
+            else if (isBlocking)
+            {
+                Debug.Log("🛡️ 방패로 막는 중에는 공격할 수 없습니다!");
+            }
+            else if (isAttacking)
+            {
+                Debug.Log("⚔️ 검을 휘두르는 중입니다!");
+            }
+        }
+
+        // 🛡️ [마우스 우클릭 : 방패 방어 (누르는 동안 가드)]
+        if (Mouse.current != null)
+        {
+            isBlocking = Mouse.current.rightButton.isPressed;
+        }
+
+        // 기타 키보드 조작
         if (Keyboard.current != null && Keyboard.current.kKey.wasPressedThisFrame)
         {
             TakeDamage(1);
-        }
-
-        if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame)
-        {
-            ThrowChalk();
         }
 
         if (Keyboard.current != null && Keyboard.current.eKey.wasPressedThisFrame)
@@ -116,7 +143,7 @@ public class PlayerController : MonoBehaviour
         pitch = Mathf.Clamp(pitch, -20f, 60f);
         cameraPivot.localEulerAngles = new Vector3(pitch, 0f, 0f);
 
-        // 이동
+        // 이동 계산
         if (controller.isGrounded && verticalVelocity < 0f) verticalVelocity = -2f;
         verticalVelocity += gravity * Time.deltaTime;
 
@@ -125,37 +152,32 @@ public class PlayerController : MonoBehaviour
         if (Keyboard.current != null) isRunning = Keyboard.current.leftShiftKey.isPressed;
 
         float speed = isRunning ? moveSpeed * 2f : moveSpeed;
+        if (isBlocking) speed *= 0.5f;   // 방어 중 이동속도 50% 감속
+        if (isAttacking) speed *= 0.3f;  // 공격 딜레이 중 이동속도 70% 감속
+
         move = move * speed;
         move.y = verticalVelocity;
 
-        // 💡 [숄더뷰 + 벽 충돌 로직]
+        // 카메라 숄더뷰 및 벽 충돌 감지
         if (cameraPivot != null && cameraTranform != null)
         {
-            // 숄더뷰 기본 위치 설정 (원하는 X축 오프셋 유지!)
             float defaultTargetZ = isRunning ? cameraOffset.z - 1.5f : cameraOffset.z;
             Vector3 targetLocalPos = new Vector3(cameraOffset.x, cameraOffset.y, defaultTargetZ);
 
-            // cameraPivot을 기준으로 카메라의 목표 World 위치 계산
             Vector3 targetWorldPos = cameraPivot.TransformPoint(targetLocalPos);
             Vector3 pivotPos = cameraPivot.position;
             Vector3 dirToCam = (targetWorldPos - pivotPos).normalized;
             float maxDistance = Vector3.Distance(pivotPos, targetWorldPos);
 
-            // Player 본인을 제외한 레이어 마스크
             int layerMask = ~LayerMask.GetMask("Player", "Ignore Raycast");
 
-            // SphereCast로 어깨 너비와 뒤쪽 벽을 동시에 감지
             if (Physics.SphereCast(pivotPos, 0.25f, dirToCam, out RaycastHit hit, maxDistance, layerMask))
             {
-                // 벽에 걸리면 벽 앞으로 당겨진 좌표 계산
                 Vector3 hitWorldPos = hit.point - dirToCam * 0.15f;
                 targetLocalPos = cameraPivot.InverseTransformPoint(hitWorldPos);
             }
 
-            // 카메라 위치 적용 (X축 숄더뷰 유지)
             Vector3 camPos = cameraTranform.localPosition;
-
-            // 벽에 가깝게 당겨질 때는 즉시 반응, 원래대로 돌아갈 때는 부드럽게
             if (targetLocalPos.z > camPos.z)
             {
                 camPos = targetLocalPos;
@@ -171,97 +193,132 @@ public class PlayerController : MonoBehaviour
         controller.Move(move * Time.deltaTime);
     }
 
+    // ⚔️ [검 공격 코루틴 (딜레이 처리)]
+    // ⚔️ [검 공격 코루틴]
+    private System.Collections.IEnumerator SwordAttackRoutine()
+    {
+        isAttacking = true;
+        lastAttackTime = Time.time;
+
+        // 1. 검을 앞으로 찔러/휘둘렀다 돌아오는 찌르기 모션 연출 시작
+        if (swordTransform != null)
+        {
+            StartCoroutine(SwordSwingMotion());
+        }
+
+        // 2. 적 피격 판정
+        Vector3 attackOrigin = transform.position + Vector3.up * 1.0f;
+        Vector3 attackDir = transform.forward;
+        RaycastHit[] hits = Physics.SphereCastAll(attackOrigin, 0.8f, attackDir, swordAttackRange);
+
+        foreach (var hit in hits)
+        {
+            if (hit.collider.CompareTag("Monster"))
+            {
+                Monster monster = hit.collider.GetComponent<Monster>();
+                if (monster != null) monster.TakeDamage(swordDamage);
+
+                RangedMonster rangedMonster = hit.collider.GetComponent<RangedMonster>();
+                if (rangedMonster != null) rangedMonster.TakeDamage(swordDamage);
+            }
+        }
+
+        // 3. 공격 후딜레이 대기
+        yield return new WaitForSeconds(attackDelay);
+
+        isAttacking = false;
+    }
+
+    // 🗡️ [간이 검 휘두르기/찌르기 모션 (앞으로 이동 및 회전 후 원위치)]
+    private System.Collections.IEnumerator SwordSwingMotion()
+    {
+        Vector3 originalPos = swordTransform.localPosition;
+        Quaternion originalRot = swordTransform.localRotation;
+
+        // 앞으로 전진 및 살짝 찌르듯 회전할 목표 Transform
+        Vector3 targetPos = originalPos + new Vector3(0.2f, -0.1f, 0.6f);
+        Quaternion targetRot = originalRot * Quaternion.Euler(20f, -40f, -30f);
+
+        float elapsed = 0f;
+        float swingDuration = 0.15f; // 앞으로 나가는 시간 (0.15초)
+        float returnDuration = 0.25f; // 다시 돌아오는 시간 (0.25초)
+
+        // 1. 앞으로 휘두르며/찌르며 나아가기 (Fast Forward)
+        while (elapsed < swingDuration)
+        {
+            elapsed += Time.deltaTime;
+            float t = elapsed / swingDuration;
+            swordTransform.localPosition = Vector3.Lerp(originalPos, targetPos, t);
+            swordTransform.localRotation = Quaternion.Slerp(originalRot, targetRot, t);
+            yield return null;
+        }
+
+        elapsed = 0f;
+
+        // 2. 원래 위치와 회전으로 부드럽게 복귀 (Smooth Return)
+        while (elapsed < returnDuration)
+        {
+            elapsed += Time.deltaTime;
+            float t = elapsed / returnDuration;
+            swordTransform.localPosition = Vector3.Lerp(targetPos, originalPos, t);
+            swordTransform.localRotation = Quaternion.Slerp(targetRot, originalRot, t);
+            yield return null;
+        }
+
+        // 위치 오차 방지를 위해 최종 좌표 보정
+        swordTransform.localPosition = originalPos;
+        swordTransform.localRotation = originalRot;
+    }
+
+    // 🛡️ [데미지 피격 - 방어 시 무효화 적용]
+    public void TakeDamage(int damage)
+    {
+        if (hp <= 0 || isInvincible) return;
+
+        // 방패로 막는 중이면 데미지 차감 방지
+        if (isBlocking)
+        {
+            int blockedDamage = Mathf.RoundToInt(damage * (1f - guardDamageReduction));
+            Debug.Log($"🛡️ 방패로 막았습니다! 받은 데미지: {blockedDamage}");
+
+            if (blockedDamage <= 0) return; // 완전 가드 시 리턴
+            damage = blockedDamage;
+        }
+
+        hp -= damage;
+        currentHp = hp;
+        UpdateHearts();
+
+        if (hp <= 0) GameOver();
+    }
+
+    // 분필 생성 및 줍기 시스템 유지
     public void SpawnWorldChalks(int count)
     {
         for (int i = 0; i < count; i++)
         {
-            Vector3 spawnPos;
-
-            if (spawnPoints != null && spawnPoints.Length > 0)
-            {
-                int index = i % spawnPoints.Length;
-                spawnPos = spawnPoints[index].position;
-            }
-            else
-            {
-                spawnPos = transform.position + transform.forward * (2f + i * 1.5f) + Vector3.up * 0.5f;
-            }
+            Vector3 spawnPos = (spawnPoints != null && spawnPoints.Length > 0)
+                ? spawnPoints[i % spawnPoints.Length].position
+                : transform.position + transform.forward * (2f + i * 1.5f) + Vector3.up * 0.5f;
 
             GameObject chalkObj = Instantiate(chalkPrefab, spawnPos, Quaternion.identity);
             Chalk chalk = chalkObj.GetComponent<Chalk>();
-
             if (chalk != null)
             {
                 chalk.damage = 4;
                 chalk.chalkPrefab = chalkPrefab;
                 chalk.DropToGround();
             }
-
             chalkObj.transform.localScale = baseChalkScale;
         }
     }
 
     public void CheckAndRefillChalks()
     {
-        for (int i = 0; i < slotDamages.Length; i++)
-        {
-            if (slotDamages[i] > 0) return;
-        }
+        for (int i = 0; i < slotDamages.Length; i++) if (slotDamages[i] > 0) return;
 
         Chalk[] activeChalks = FindObjectsByType<Chalk>(FindObjectsSortMode.None);
-
-        if (activeChalks.Length == 0)
-        {
-            Debug.Log("모든 분필 소멸! 맵에 새 분필 2개를 스폰합니다.");
-            SpawnWorldChalks(2);
-        }
-    }
-
-    private void ThrowChalk()
-    {
-        int targetSlot = -1;
-        for (int i = slotDamages.Length - 1; i >= 0; i--)
-        {
-            if (slotDamages[i] > 0)
-            {
-                targetSlot = i;
-                break;
-            }
-        }
-
-        if (targetSlot == -1)
-        {
-            Debug.Log("슬롯에 분필이 없습니다!");
-            return;
-        }
-
-        int chalkDmg = slotDamages[targetSlot];
-        slotDamages[targetSlot] = 0;
-        UpdateChalkUI();
-
-        Camera mainCam = Camera.main != null ? Camera.main : cameraPivot.GetComponentInChildren<Camera>();
-        Ray ray = mainCam.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
-
-        Vector3 targetPoint = Physics.Raycast(ray, out RaycastHit hit, 50f) ? hit.point : ray.GetPoint(50f);
-
-        // 💡 ThrowPoint가 있으면 사용하되, 플레이어 몸 앞쪽으로 안전 위치 잡기
-        Vector3 spawnPos = throwPoint != null ? throwPoint.position : transform.position + transform.forward * 1.2f + transform.up * 1.2f;
-
-        Vector3 targetDirection = (targetPoint - spawnPos).normalized;
-        Quaternion spawnRot = Quaternion.LookRotation(targetDirection);
-
-        GameObject chalkObj = Instantiate(chalkPrefab, spawnPos, spawnRot);
-        Chalk chalk = chalkObj.GetComponent<Chalk>();
-
-        if (chalk != null)
-        {
-            chalk.damage = chalkDmg;
-            chalk.chalkPrefab = chalkPrefab;
-            chalk.isThrown = true;
-        }
-
-        float scaleRatio = (float)chalkDmg / 4f;
-        chalkObj.transform.localScale = baseChalkScale * scaleRatio;
+        if (activeChalks.Length == 0) SpawnWorldChalks(2);
     }
 
     private void TryPickupNearbyChalk()
@@ -269,18 +326,9 @@ public class PlayerController : MonoBehaviour
         int emptySlot = -1;
         for (int i = 0; i < slotDamages.Length; i++)
         {
-            if (slotDamages[i] == 0)
-            {
-                emptySlot = i;
-                break;
-            }
+            if (slotDamages[i] == 0) { emptySlot = i; break; }
         }
-
-        if (emptySlot == -1)
-        {
-            Debug.Log("슬롯 3개가 모두 가득 찼습니다!");
-            return;
-        }
+        if (emptySlot == -1) return;
 
         Collider[] hitColliders = Physics.OverlapSphere(transform.position, pickupRadius);
         Chalk nearestChalk = null;
@@ -311,23 +359,10 @@ public class PlayerController : MonoBehaviour
     private void UpdateChalkUI()
     {
         if (chalkSlots == null) return;
-
         for (int i = 0; i < chalkSlots.Length; i++)
         {
-            if (chalkSlots[i] != null)
-            {
-                chalkSlots[i].enabled = (slotDamages[i] > 0);
-            }
+            if (chalkSlots[i] != null) chalkSlots[i].enabled = (slotDamages[i] > 0);
         }
-    }
-
-    public void TakeDamage(int damage)
-    {
-        if (hp <= 0) return;
-        hp -= damage;
-        currentHp = hp;
-        UpdateHearts();
-        if (hp <= 0) GameOver();
     }
 
     private void UpdateHearts()
@@ -339,7 +374,7 @@ public class PlayerController : MonoBehaviour
     private void GameOver()
     {
         Time.timeScale = 0f;
-        Cursor.lockState = CursorLockMode.None;
+        Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = true;
     }
 }
