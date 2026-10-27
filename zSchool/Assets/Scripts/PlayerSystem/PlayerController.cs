@@ -112,6 +112,9 @@ public class PlayerController : MonoBehaviour
 
     void Update()
     {
+        // 🛑 [핵심] 일시정지 상태(설정창 열림 등)일 때는 플레이어 조작 및 시점 회전을 완전히 차단
+        if (Time.timeScale == 0f) return;
+
         // 🔢 [키보드 1, 2, 3, 4번 슬롯 선택 입력]
         if (Keyboard.current != null)
         {
