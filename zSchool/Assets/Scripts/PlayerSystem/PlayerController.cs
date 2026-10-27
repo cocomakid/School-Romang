@@ -67,6 +67,8 @@ public class PlayerController : MonoBehaviour
     [Range(0f, 1f)]
     public float guardDamageReduction = 1.0f; // 방어 시 데미지 감쇄율 (1.0 = 100% 무효화)
 
+    [Header("UI Panels")]
+    public GameObject gameOverPanel; // 유니티 인스펙터에서 게임 오버 패널 연결
 
     private void OnControllerColliderHit(ControllerColliderHit hit)
     {
@@ -89,7 +91,10 @@ public class PlayerController : MonoBehaviour
         controller = GetComponent<CharacterController>();
         Cursor.lockState = CursorLockMode.Locked;
 
+        // 🔄 [수정] 씬이 재시작되거나 처음 시작할 때 HP를 4(최대 체력)로 확실하게 리셋
+        currentHp = 4;
         hp = currentHp;
+
         UpdateHearts();
 
         for (int i = 0; i < slotDamages.Length; i++)
@@ -99,7 +104,7 @@ public class PlayerController : MonoBehaviour
         UpdateChalkUI();
         SpawnWorldChalks(2);
 
-        // 시작할 때 슬롯 1번 선택 상태 적용
+        // 시작할 때 슬롯 1번(인덱스 0) 선택 상태 적용
         SelectSlot(0);
     }
 
@@ -226,7 +231,6 @@ public class PlayerController : MonoBehaviour
 
         controller.Move(move * Time.deltaTime);
     }
-
     private void ThrowChalk(int damage)
     {
         if (chalkPrefab == null) return;
@@ -462,8 +466,17 @@ public class PlayerController : MonoBehaviour
 
     private void GameOver()
     {
+        // 게임 오버 패널이 연결되어 있다면 활성화
+        if (gameOverPanel != null)
+        {
+            gameOverPanel.SetActive(true);
+        }
+
+        // 시간 정지 및 마우스 커서 해제
         Time.timeScale = 0f;
-        Cursor.lockState = CursorLockMode.Locked;
+        Cursor.lockState = CursorLockMode.None;
         Cursor.visible = true;
+
+        Debug.Log("💀 게임 오버!");
     }
 }
