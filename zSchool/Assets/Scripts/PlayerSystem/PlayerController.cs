@@ -32,9 +32,18 @@ public class PlayerController : MonoBehaviour
 
     [Header("Chalk Spawn Settings")]
     public Transform[] spawnPoints;
-    [SerializeField] private Image[] chalkSlots = new Image[3];
-    private int[] slotDamages = new int[3];
+    [SerializeField] private Image[] chalkSlots = new Image[4];
+    private int[] slotDamages = new int[4];
     private readonly Vector3 baseChalkScale = new Vector3(0.15f, 0.2f, 0.15f);
+
+    // ==========================================
+    // 🎒 [인벤토리 및 장착 시스템 설정]
+    // ==========================================
+    [Header("Inventory & Equipment Settings")]
+    private int selectedSlotIndex = 0; // 0: 1번칸, 1: 2번칸, 2: 3번칸, 3: 4번칸
+    public GameObject swordObject;     // 검 오브젝트
+    public GameObject shieldObject;    // 방패 오브젝트
+    public GameObject chalkInHandObject; // 🖐️ 손에 들리는 분필 오브젝트 (플레이어 손 자식으로 두고 평소엔 비활성화)
 
     [Header("Camera Offset Settings")]
     public Vector3 cameraOffset = new Vector3(0.68f, 0f, -2.5f);
@@ -44,22 +53,21 @@ public class PlayerController : MonoBehaviour
     // ==========================================
     [Header("Weapon & Shield Settings")]
     public Transform swordTransform;
-    public Transform rightHandPoint;       // 오른손 검 위치
-    public Transform leftHandPoint;        // 왼손 방패 위치
+    public Transform rightHandPoint;        // 오른손 검 위치
+    public Transform leftHandPoint;         // 왼손 방패 위치
     public float swordAttackRange = 2.5f;   // 검 사거리
-    public int swordDamage = 3;            // 검 데미지
-    public float attackCooldown = 1.0f;    // 다음 공격까지의 쿨타임
-    public float attackDelay = 1.0f;       // 검 휘두르기 딜레이 (1초)
+    public int swordDamage = 3;             // 검 데미지
+    public float attackCooldown = 1.0f;     // 다음 공격까지의 쿨타임
+    public float attackDelay = 1.0f;        // 검 휘두르기 딜레이 (1초)
     private float lastAttackTime;
-    private bool isAttacking = false;      // 공격 중 여부
+    private bool isAttacking = false;       // 공격 중 여부
 
     [Header("Guard State")]
-    public bool isBlocking = false;        // 현재 방어 상태 여부
+    public bool isBlocking = false;         // 현재 방어 상태 여부
     [Range(0f, 1f)]
     public float guardDamageReduction = 1.0f; // 방어 시 데미지 감쇄율 (1.0 = 100% 무효화)
 
 
-    // 적과 피지컬 충돌 시 (선택사항)
     private void OnControllerColliderHit(ControllerColliderHit hit)
     {
         if (hit.gameObject.CompareTag("Monster") && !isInvincible)
@@ -90,6 +98,9 @@ public class PlayerController : MonoBehaviour
         }
         UpdateChalkUI();
         SpawnWorldChalks(2);
+
+        // 시작할 때 슬롯 1번 선택 상태 적용
+        SelectSlot(0);
     }
 
     public void OnMove(InputValue value) => moveInput = value.Get<Vector2>();
@@ -101,30 +112,50 @@ public class PlayerController : MonoBehaviour
 
     void Update()
     {
-        // ⚔️ [마우스 좌클릭 : 검 휘두르기 공격 (방패 막기 중이거나 공격 중일 때는 불가)]
+        // 🔢 [키보드 1, 2, 3, 4번 슬롯 선택 입력]
+        if (Keyboard.current != null)
+        {
+            if (Keyboard.current.digit1Key.wasPressedThisFrame || Keyboard.current.numpad1Key.wasPressedThisFrame) SelectSlot(0);
+            if (Keyboard.current.digit2Key.wasPressedThisFrame || Keyboard.current.numpad2Key.wasPressedThisFrame) SelectSlot(1);
+            if (Keyboard.current.digit3Key.wasPressedThisFrame || Keyboard.current.numpad3Key.wasPressedThisFrame) SelectSlot(2);
+            if (Keyboard.current.digit4Key.wasPressedThisFrame || Keyboard.current.numpad4Key.wasPressedThisFrame) SelectSlot(3);
+        }
+
+        // ⚔️ [마우스 좌클릭 : 검 공격 (1번 슬롯이고 검이 장착되어 있을 때만)]
         if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame)
         {
-            if (!isAttacking && !isBlocking && Time.time >= lastAttackTime + attackCooldown)
+            if (selectedSlotIndex == 0)
             {
-                StartCoroutine(SwordAttackRoutine());   
+                if (!isAttacking && !isBlocking && Time.time >= lastAttackTime + attackCooldown)
+                {
+                    StartCoroutine(SwordAttackRoutine());
+                }
             }
-            else if (isBlocking)
+            else
             {
-                Debug.Log("🛡️ 방패로 막는 중에는 공격할 수 없습니다!");
-            }
-            else if (isAttacking)
-            {
-                Debug.Log("⚔️ 검을 휘두르는 중입니다!");
+                // 분필 슬롯일 때 마우스 좌클릭 시 분필 던지기 로직을 여기에 연동할 수 있습니다.
+                if (slotDamages[selectedSlotIndex] > 0)
+                {
+                    ThrowChalk(slotDamages[selectedSlotIndex]); // 분필 던지기 함수 호출
+
+                    // 인벤토리 슬롯 비우기
+                    slotDamages[selectedSlotIndex] = 0;
+                    UpdateChalkUI(); // UI 갱신
+                    SelectSlot(selectedSlotIndex); // 손에 든 분필 숨기기 갱신
+                }
+                else
+                {
+                    Debug.Log("⚠️ 비어있는 슬롯입니다!");
+                }
             }
         }
 
-        // 🛡️ [마우스 우클릭 : 방패 방어 (누르는 동안 가드)]
+        // 🛡️ [마우스 우클릭 : 방어 (1번 슬롯일 때만)]
         if (Mouse.current != null)
         {
-            isBlocking = Mouse.current.rightButton.isPressed;
+            isBlocking = (selectedSlotIndex == 0) && Mouse.current.rightButton.isPressed;
         }
 
-        // 기타 키보드 조작
         if (Keyboard.current != null && Keyboard.current.kKey.wasPressedThisFrame)
         {
             TakeDamage(1);
@@ -152,13 +183,13 @@ public class PlayerController : MonoBehaviour
         if (Keyboard.current != null) isRunning = Keyboard.current.leftShiftKey.isPressed;
 
         float speed = isRunning ? moveSpeed * 2f : moveSpeed;
-        if (isBlocking) speed *= 0.5f;   // 방어 중 이동속도 50% 감속
-        if (isAttacking) speed *= 0.3f;  // 공격 딜레이 중 이동속도 70% 감속
+        if (isBlocking) speed *= 0.5f;
+        if (isAttacking) speed *= 0.3f;
 
         move = move * speed;
         move.y = verticalVelocity;
 
-        // 카메라 숄더뷰 및 벽 충돌 감지
+        // 카메라 처리
         if (cameraPivot != null && cameraTranform != null)
         {
             float defaultTargetZ = isRunning ? cameraOffset.z - 1.5f : cameraOffset.z;
@@ -193,20 +224,67 @@ public class PlayerController : MonoBehaviour
         controller.Move(move * Time.deltaTime);
     }
 
-    // ⚔️ [검 공격 코루틴 (딜레이 처리)]
+    private void ThrowChalk(int damage)
+    {
+        if (chalkPrefab == null) return;
+
+        // 1. 발사 위치(ThrowPoint) 설정 (없으면 플레이어 전방에 생성)
+        Vector3 spawnPos = (throwPoint != null) ? throwPoint.position : transform.position + transform.forward + Vector3.up * 1f;
+
+        // 카메라가 바라보는 방향으로 회전값 맞추기
+        Quaternion spawnRot = (Camera.main != null) ? Camera.main.transform.rotation : transform.rotation;
+
+        // 2. 분필 프리팹 생성 (Chalk 스크립트의 Start()에서 자동으로 isThrown = true 처리가 됨)
+        GameObject thrownChalkObj = Instantiate(chalkPrefab, spawnPos, spawnRot);
+
+        // 3. Chalk 컴포넌트에 데미지 설정
+        Chalk chalkScript = thrownChalkObj.GetComponent<Chalk>();
+        if (chalkScript != null)
+        {
+            chalkScript.damage = damage;
+            chalkScript.chalkPrefab = chalkPrefab;
+            chalkScript.isThrown = true; // 던져진 상태 명시
+        }
+    }
+
+    // 🎒 [슬롯 선택 및 아이템 표시/숨김 처리]
+    private void SelectSlot(int slotIndex)
+    {
+        selectedSlotIndex = slotIndex;
+        Debug.Log($"🎒 {slotIndex + 1}번 슬롯 선택됨");
+
+        bool isFirstSlot = (selectedSlotIndex == 0);
+        bool hasChalkInSlot = (slotDamages[selectedSlotIndex] > 0);
+
+        // 1. 1번 슬롯일 때: 검과 방패 표시, 분필 숨김
+        if (swordTransform != null) swordTransform.gameObject.SetActive(isFirstSlot);
+        if (swordObject != null) swordObject.SetActive(isFirstSlot);
+        if (shieldObject != null) shieldObject.SetActive(isFirstSlot);
+
+        // 2. 2, 3, 4번 슬롯일 때: 검/방패 숨기고, 분필을 가지고 있다면 손에 분필 표시, 없으면 숨김
+        if (chalkInHandObject != null)
+        {
+            // 1번 칸이 아니고, 해당 칸에 분필 데이터가 있으면 손에 분필 활성화
+            chalkInHandObject.SetActive(!isFirstSlot && hasChalkInSlot);
+        }
+
+        if (!isFirstSlot)
+        {
+            isBlocking = false; // 다른 슬롯으로 바꾸면 방어 해제
+        }
+    }
+
     // ⚔️ [검 공격 코루틴]
     private System.Collections.IEnumerator SwordAttackRoutine()
     {
         isAttacking = true;
         lastAttackTime = Time.time;
 
-        // 1. 검을 앞으로 찔러/휘둘렀다 돌아오는 찌르기 모션 연출 시작
         if (swordTransform != null)
         {
             StartCoroutine(SwordSwingMotion());
         }
 
-        // 2. 적 피격 판정
         Vector3 attackOrigin = transform.position + Vector3.up * 1.0f;
         Vector3 attackDir = transform.forward;
         RaycastHit[] hits = Physics.SphereCastAll(attackOrigin, 0.8f, attackDir, swordAttackRange);
@@ -223,27 +301,22 @@ public class PlayerController : MonoBehaviour
             }
         }
 
-        // 3. 공격 후딜레이 대기
         yield return new WaitForSeconds(attackDelay);
-
         isAttacking = false;
     }
 
-    // 🗡️ [간이 검 휘두르기/찌르기 모션 (앞으로 이동 및 회전 후 원위치)]
     private System.Collections.IEnumerator SwordSwingMotion()
     {
         Vector3 originalPos = swordTransform.localPosition;
         Quaternion originalRot = swordTransform.localRotation;
 
-        // 앞으로 전진 및 살짝 찌르듯 회전할 목표 Transform
         Vector3 targetPos = originalPos + new Vector3(0.2f, -0.1f, 0.6f);
         Quaternion targetRot = originalRot * Quaternion.Euler(20f, -40f, -30f);
 
         float elapsed = 0f;
-        float swingDuration = 0.15f; // 앞으로 나가는 시간 (0.15초)
-        float returnDuration = 0.25f; // 다시 돌아오는 시간 (0.25초)
+        float swingDuration = 0.15f;
+        float returnDuration = .25f;
 
-        // 1. 앞으로 휘두르며/찌르며 나아가기 (Fast Forward)
         while (elapsed < swingDuration)
         {
             elapsed += Time.deltaTime;
@@ -255,7 +328,6 @@ public class PlayerController : MonoBehaviour
 
         elapsed = 0f;
 
-        // 2. 원래 위치와 회전으로 부드럽게 복귀 (Smooth Return)
         while (elapsed < returnDuration)
         {
             elapsed += Time.deltaTime;
@@ -265,23 +337,20 @@ public class PlayerController : MonoBehaviour
             yield return null;
         }
 
-        // 위치 오차 방지를 위해 최종 좌표 보정
         swordTransform.localPosition = originalPos;
         swordTransform.localRotation = originalRot;
     }
 
-    // 🛡️ [데미지 피격 - 방어 시 무효화 적용]
     public void TakeDamage(int damage)
     {
         if (hp <= 0 || isInvincible) return;
 
-        // 방패로 막는 중이면 데미지 차감 방지
         if (isBlocking)
         {
             int blockedDamage = Mathf.RoundToInt(damage * (1f - guardDamageReduction));
             Debug.Log($"🛡️ 방패로 막았습니다! 받은 데미지: {blockedDamage}");
 
-            if (blockedDamage <= 0) return; // 완전 가드 시 리턴
+            if (blockedDamage <= 0) return;
             damage = blockedDamage;
         }
 
@@ -292,7 +361,6 @@ public class PlayerController : MonoBehaviour
         if (hp <= 0) GameOver();
     }
 
-    // 분필 생성 및 줍기 시스템 유지
     public void SpawnWorldChalks(int count)
     {
         for (int i = 0; i < count; i++)
@@ -323,8 +391,9 @@ public class PlayerController : MonoBehaviour
 
     private void TryPickupNearbyChalk()
     {
+        // 2, 3, 4번 슬롯(인덱스 1, 2, 3) 중에서 빈 슬롯 탐색
         int emptySlot = -1;
-        for (int i = 0; i < slotDamages.Length; i++)
+        for (int i = 1; i < slotDamages.Length; i++)
         {
             if (slotDamages[i] == 0) { emptySlot = i; break; }
         }
@@ -352,6 +421,13 @@ public class PlayerController : MonoBehaviour
         {
             slotDamages[emptySlot] = nearestChalk.damage;
             UpdateChalkUI();
+
+            // 만약 현재 방금 주워서 채운 슬롯을 보고 있었다면 손에 분필 즉시 반영
+            if (selectedSlotIndex == emptySlot)
+            {
+                SelectSlot(selectedSlotIndex);
+            }
+
             Destroy(nearestChalk.gameObject);
         }
     }
@@ -361,7 +437,17 @@ public class PlayerController : MonoBehaviour
         if (chalkSlots == null) return;
         for (int i = 0; i < chalkSlots.Length; i++)
         {
-            if (chalkSlots[i] != null) chalkSlots[i].enabled = (slotDamages[i] > 0);
+            if (chalkSlots[i] != null)
+            {
+                if (i == 0)
+                {
+                    chalkSlots[i].enabled = true; // 1번 칸은 항상 켜둠 (검&방패 아이콘)
+                }
+                else
+                {
+                    chalkSlots[i].enabled = (slotDamages[i] > 0); // 분필이 있을 때만 UI 켜기
+                }
+            }
         }
     }
 
