@@ -4,7 +4,6 @@ using UnityEngine.InputSystem;
 
 public class PlayerController : MonoBehaviour
 {
-    // 적 충돌 피해 및 무적 시간
     private bool isInvincible = false;
     public float invincibleDuration = 1f;
     public float moveSpeed = 5f;
@@ -24,51 +23,54 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private Image[] hearts;
     private int hp = 4;
     public static int currentHp = 4;
+    private int maxHp = 4;
 
-    [Header("Chalk System & UI")]
+    [Header("Chalk System & UI (분필 시스템)")]
     public GameObject chalkPrefab;
     public Transform throwPoint;
     public float pickupRadius = 3.0f;
-
-    [Header("Chalk Spawn Settings")]
-    public Transform[] spawnPoints;
+    public Transform[] spawnPoints; // 분필 전용 스폰 포인트
     [SerializeField] private Image[] chalkSlots = new Image[4];
     private int[] slotDamages = new int[4];
     private readonly Vector3 baseChalkScale = new Vector3(0.15f, 0.2f, 0.15f);
 
-    // ==========================================
-    // 🎒 [인벤토리 및 장착 시스템 설정]
-    // ==========================================
-    [Header("Inventory & Equipment Settings")]
-    private int selectedSlotIndex = 0; // 0: 1번칸, 1: 2번칸, 2: 3번칸, 3: 4번칸
-    public GameObject swordObject;     // 검 오브젝트
-    public GameObject shieldObject;    // 방패 오브젝트
-    public GameObject chalkInHandObject; // 🖐️ 손에 들리는 분필 오브젝트 (플레이어 손 자식으로 두고 평소엔 비활성화)
+    [Header("Milk & Jety System (우유/제티 시스템)")]
+    public GameObject milkPrefab;
+    public GameObject jetyPrefab;
+    public Transform[] milkSpawnPoints; // 우유 전용 스폰 포인트
+    public Transform[] jetySpawnPoints; // 제티 전용 스폰 포인트
+
+    [Header("Inventory UI & Icons (인벤토리 및 아이템 이미지)")]
+    [SerializeField] private Image[] slotIcons = new Image[4];
+    [SerializeField] private Sprite milkIconSprite;
+    [SerializeField] private Sprite jetyIconSprite;
+    [SerializeField] private Sprite chocoMilkIconSprite;
+    private int[] slotItemTypes = new int[4]; // 0: 빈칸, 1: 우유, 2: 제티, 3: 초코우유
+
+    [Header("Equipment Settings")]
+    private int selectedSlotIndex = 0;
+    public GameObject swordObject;
+    public GameObject shieldObject;
+    public GameObject milkInHandObject;
+    public GameObject jetyInHandObject;
+    public GameObject chocoMilkInHandObject;
 
     [Header("Camera Offset Settings")]
     public Vector3 cameraOffset = new Vector3(0.68f, 0f, -2.5f);
 
-    // ==========================================
-    // ⚔️ [검 & 방패 전투 시스템 설정]
-    // ==========================================
     [Header("Weapon & Shield Settings")]
     public Transform swordTransform;
-    public Transform rightHandPoint;        // 오른손 검 위치
-    public Transform leftHandPoint;         // 왼손 방패 위치
-    public float swordAttackRange = 2.5f;   // 검 사거리
-    public int swordDamage = 3;             // 검 데미지
-    public float attackCooldown = 1.0f;     // 다음 공격까지의 쿨타임
-    public float attackDelay = 1.0f;        // 검 휘두르기 딜레이 (1초)
+    public float swordAttackRange = 2.5f;
+    public int swordDamage = 3;
+    public float attackCooldown = 1.0f;
+    public float attackDelay = 1.0f;
     private float lastAttackTime;
-    private bool isAttacking = false;       // 공격 중 여부
+    private bool isAttacking = false;
 
     [Header("Guard State")]
-    public bool isBlocking = false;         // 현재 방어 상태 여부
+    public bool isBlocking = false;
     [Range(0f, 1f)]
-    public float guardDamageReduction = 1.0f; // 방어 시 데미지 감쇄율 (1.0 = 100% 무효화)
-
-    [Header("UI Panels")]
-    public GameObject gameOverPanel; // 유니티 인스펙터에서 게임 오버 패널 연결
+    public float guardDamageReduction = 1.0f;
 
     private void OnControllerColliderHit(ControllerColliderHit hit)
     {
@@ -91,20 +93,19 @@ public class PlayerController : MonoBehaviour
         controller = GetComponent<CharacterController>();
         Cursor.lockState = CursorLockMode.Locked;
 
-        // 🔄 [수정] 씬이 재시작되거나 처음 시작할 때 HP를 4(최대 체력)로 확실하게 리셋
         currentHp = 4;
         hp = currentHp;
-
         UpdateHearts();
 
-        for (int i = 0; i < slotDamages.Length; i++)
-        {
-            slotDamages[i] = 0;
-        }
-        UpdateChalkUI();
-        SpawnWorldChalks(2);
+        for (int i = 0; i < slotDamages.Length; i++) slotDamages[i] = 0;
+        for (int i = 0; i < slotItemTypes.Length; i++) slotItemTypes[i] = 0;
 
-        // 시작할 때 슬롯 1번(인덱스 0) 선택 상태 적용
+        UpdateChalkUI();
+        UpdateInventoryUI();
+
+        SpawnWorldChalks(2);
+        SpawnInitialItems();
+
         SelectSlot(0);
     }
 
@@ -117,10 +118,8 @@ public class PlayerController : MonoBehaviour
 
     void Update()
     {
-        // 🛑 [핵심] 일시정지 상태(설정창 열림 등)일 때는 플레이어 조작 및 시점 회전을 완전히 차단
         if (Time.timeScale == 0f) return;
 
-        // 🔢 [키보드 1, 2, 3, 4번 슬롯 선택 입력]
         if (Keyboard.current != null)
         {
             if (Keyboard.current.digit1Key.wasPressedThisFrame || Keyboard.current.numpad1Key.wasPressedThisFrame) SelectSlot(0);
@@ -129,7 +128,11 @@ public class PlayerController : MonoBehaviour
             if (Keyboard.current.digit4Key.wasPressedThisFrame || Keyboard.current.numpad4Key.wasPressedThisFrame) SelectSlot(3);
         }
 
-        // ⚔️ [마우스 좌클릭 : 검 공격 (1번 슬롯이고 검이 장착되어 있을 때만)]
+        if (Keyboard.current != null && Keyboard.current.fKey.wasPressedThisFrame)
+        {
+            TryCraftChocoMilk();
+        }
+
         if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame)
         {
             if (selectedSlotIndex == 0)
@@ -141,53 +144,42 @@ public class PlayerController : MonoBehaviour
             }
             else
             {
-                // 분필 슬롯일 때 마우스 좌클릭 시 분필 던지기 로직을 여기에 연동할 수 있습니다.
                 if (slotDamages[selectedSlotIndex] > 0)
                 {
-                    ThrowChalk(slotDamages[selectedSlotIndex]); // 분필 던지기 함수 호출
-
-                    // 인벤토리 슬롯 비우기
+                    ThrowChalk(slotDamages[selectedSlotIndex]);
                     slotDamages[selectedSlotIndex] = 0;
-                    UpdateChalkUI(); // UI 갱신
-                    SelectSlot(selectedSlotIndex); // 손에 든 분필 숨기기 갱신
+                    UpdateChalkUI();
+                    SelectSlot(selectedSlotIndex);
                 }
                 else
                 {
-                    Debug.Log("⚠️ 비어있는 슬롯입니다!");
+                    UseSelectedItem();
                 }
             }
         }
 
-        // 🛡️ [마우스 우클릭 : 방어 (1번 슬롯일 때만)]
         if (Mouse.current != null)
         {
             isBlocking = (selectedSlotIndex == 0) && Mouse.current.rightButton.isPressed;
         }
 
-        if (Keyboard.current != null && Keyboard.current.kKey.wasPressedThisFrame)
-        {
-            TakeDamage(1);
-        }
-
+        if (Keyboard.current != null && Keyboard.current.kKey.wasPressedThisFrame) TakeDamage(1);
         if (Keyboard.current != null && Keyboard.current.eKey.wasPressedThisFrame)
         {
             TryPickupNearbyChalk();
+            TryPickupItem();
         }
 
         CheckAndRefillChalks();
 
-        // 시선 회전
         transform.Rotate(0f, lookInput.x * mouseSensitivity, 0f);
-        pitch = pitch - lookInput.y * mouseSensitivity;
-        pitch = Mathf.Clamp(pitch, -20f, 60f);
+        pitch = Mathf.Clamp(pitch - lookInput.y * mouseSensitivity, -20f, 60f);
         cameraPivot.localEulerAngles = new Vector3(pitch, 0f, 0f);
 
-        // 이동 계산
         if (controller.isGrounded && verticalVelocity < 0f) verticalVelocity = -2f;
         verticalVelocity += gravity * Time.deltaTime;
 
         Vector3 move = transform.forward * moveInput.y + transform.right * moveInput.x;
-
         if (Keyboard.current != null) isRunning = Keyboard.current.leftShiftKey.isPressed;
 
         float speed = isRunning ? moveSpeed * 2f : moveSpeed;
@@ -196,178 +188,10 @@ public class PlayerController : MonoBehaviour
 
         move = move * speed;
         move.y = verticalVelocity;
-
-        // 카메라 처리
-        if (cameraPivot != null && cameraTranform != null)
-        {
-            float defaultTargetZ = isRunning ? cameraOffset.z - 1.5f : cameraOffset.z;
-            Vector3 targetLocalPos = new Vector3(cameraOffset.x, cameraOffset.y, defaultTargetZ);
-
-            Vector3 targetWorldPos = cameraPivot.TransformPoint(targetLocalPos);
-            Vector3 pivotPos = cameraPivot.position;
-            Vector3 dirToCam = (targetWorldPos - pivotPos).normalized;
-            float maxDistance = Vector3.Distance(pivotPos, targetWorldPos);
-
-            int layerMask = ~LayerMask.GetMask("Player", "Ignore Raycast");
-
-            if (Physics.SphereCast(pivotPos, 0.25f, dirToCam, out RaycastHit hit, maxDistance, layerMask))
-            {
-                Vector3 hitWorldPos = hit.point - dirToCam * 0.15f;
-                targetLocalPos = cameraPivot.InverseTransformPoint(hitWorldPos);
-            }
-
-            Vector3 camPos = cameraTranform.localPosition;
-            if (targetLocalPos.z > camPos.z)
-            {
-                camPos = targetLocalPos;
-            }
-            else
-            {
-                camPos = Vector3.Lerp(camPos, targetLocalPos, 20f * Time.deltaTime);
-            }
-
-            cameraTranform.localPosition = camPos;
-        }
-
         controller.Move(move * Time.deltaTime);
     }
-    private void ThrowChalk(int damage)
-    {
-        if (chalkPrefab == null) return;
 
-        // 1. 발사 위치(ThrowPoint) 설정 (없으면 플레이어 전방에 생성)
-        Vector3 spawnPos = (throwPoint != null) ? throwPoint.position : transform.position + transform.forward + Vector3.up * 1f;
-
-        // 카메라가 바라보는 방향으로 회전값 맞추기
-        Quaternion spawnRot = (Camera.main != null) ? Camera.main.transform.rotation : transform.rotation;
-
-        // 2. 분필 프리팹 생성 (Chalk 스크립트의 Start()에서 자동으로 isThrown = true 처리가 됨)
-        GameObject thrownChalkObj = Instantiate(chalkPrefab, spawnPos, spawnRot);
-
-        // 3. Chalk 컴포넌트에 데미지 설정
-        Chalk chalkScript = thrownChalkObj.GetComponent<Chalk>();
-        if (chalkScript != null)
-        {
-            chalkScript.damage = damage;
-            chalkScript.chalkPrefab = chalkPrefab;
-            chalkScript.isThrown = true; // 던져진 상태 명시
-        }
-    }
-
-    // 🎒 [슬롯 선택 및 아이템 표시/숨김 처리]
-    private void SelectSlot(int slotIndex)
-    {
-        selectedSlotIndex = slotIndex;
-        Debug.Log($"🎒 {slotIndex + 1}번 슬롯 선택됨");
-
-        bool isFirstSlot = (selectedSlotIndex == 0);
-        bool hasChalkInSlot = (slotDamages[selectedSlotIndex] > 0);
-
-        // 1. 1번 슬롯일 때: 검과 방패 표시, 분필 숨김
-        if (swordTransform != null) swordTransform.gameObject.SetActive(isFirstSlot);
-        if (swordObject != null) swordObject.SetActive(isFirstSlot);
-        if (shieldObject != null) shieldObject.SetActive(isFirstSlot);
-
-        // 2. 2, 3, 4번 슬롯일 때: 검/방패 숨기고, 분필을 가지고 있다면 손에 분필 표시, 없으면 숨김
-        if (chalkInHandObject != null)
-        {
-            // 1번 칸이 아니고, 해당 칸에 분필 데이터가 있으면 손에 분필 활성화
-            chalkInHandObject.SetActive(!isFirstSlot && hasChalkInSlot);
-        }
-
-        if (!isFirstSlot)
-        {
-            isBlocking = false; // 다른 슬롯으로 바꾸면 방어 해제
-        }
-    }
-
-    // ⚔️ [검 공격 코루틴]
-    private System.Collections.IEnumerator SwordAttackRoutine()
-    {
-        isAttacking = true;
-        lastAttackTime = Time.time;
-
-        if (swordTransform != null)
-        {
-            StartCoroutine(SwordSwingMotion());
-        }
-
-        Vector3 attackOrigin = transform.position + Vector3.up * 1.0f;
-        Vector3 attackDir = transform.forward;
-        RaycastHit[] hits = Physics.SphereCastAll(attackOrigin, 0.8f, attackDir, swordAttackRange);
-
-        foreach (var hit in hits)
-        {
-            if (hit.collider.CompareTag("Monster"))
-            {
-                Monster monster = hit.collider.GetComponent<Monster>();
-                if (monster != null) monster.TakeDamage(swordDamage);
-
-                RangedMonster rangedMonster = hit.collider.GetComponent<RangedMonster>();
-                if (rangedMonster != null) rangedMonster.TakeDamage(swordDamage);
-            }
-        }
-
-        yield return new WaitForSeconds(attackDelay);
-        isAttacking = false;
-    }
-
-    private System.Collections.IEnumerator SwordSwingMotion()
-    {
-        Vector3 originalPos = swordTransform.localPosition;
-        Quaternion originalRot = swordTransform.localRotation;
-
-        Vector3 targetPos = originalPos + new Vector3(0.2f, -0.1f, 0.6f);
-        Quaternion targetRot = originalRot * Quaternion.Euler(20f, -40f, -30f);
-
-        float elapsed = 0f;
-        float swingDuration = 0.15f;
-        float returnDuration = .25f;
-
-        while (elapsed < swingDuration)
-        {
-            elapsed += Time.deltaTime;
-            float t = elapsed / swingDuration;
-            swordTransform.localPosition = Vector3.Lerp(originalPos, targetPos, t);
-            swordTransform.localRotation = Quaternion.Slerp(originalRot, targetRot, t);
-            yield return null;
-        }
-
-        elapsed = 0f;
-
-        while (elapsed < returnDuration)
-        {
-            elapsed += Time.deltaTime;
-            float t = elapsed / returnDuration;
-            swordTransform.localPosition = Vector3.Lerp(targetPos, originalPos, t);
-            swordTransform.localRotation = Quaternion.Slerp(targetRot, originalRot, t);
-            yield return null;
-        }
-
-        swordTransform.localPosition = originalPos;
-        swordTransform.localRotation = originalRot;
-    }
-
-    public void TakeDamage(int damage)
-    {
-        if (hp <= 0 || isInvincible) return;
-
-        if (isBlocking)
-        {
-            int blockedDamage = Mathf.RoundToInt(damage * (1f - guardDamageReduction));
-            Debug.Log($"🛡️ 방패로 막았습니다! 받은 데미지: {blockedDamage}");
-
-            if (blockedDamage <= 0) return;
-            damage = blockedDamage;
-        }
-
-        hp -= damage;
-        currentHp = hp;
-        UpdateHearts();
-
-        if (hp <= 0) GameOver();
-    }
-
+    // 🖍️ 분필 스폰 및 관리
     public void SpawnWorldChalks(int count)
     {
         for (int i = 0; i < count; i++)
@@ -381,7 +205,7 @@ public class PlayerController : MonoBehaviour
             if (chalk != null)
             {
                 chalk.damage = 4;
-                chalk.chalkPrefab = chalkPrefab;
+                chalk.chalkPrefab = chalkPrefab; // 👈 정상 반영
                 chalk.DropToGround();
             }
             chalkObj.transform.localScale = baseChalkScale;
@@ -391,14 +215,12 @@ public class PlayerController : MonoBehaviour
     public void CheckAndRefillChalks()
     {
         for (int i = 0; i < slotDamages.Length; i++) if (slotDamages[i] > 0) return;
-
         Chalk[] activeChalks = FindObjectsByType<Chalk>(FindObjectsSortMode.None);
         if (activeChalks.Length == 0) SpawnWorldChalks(2);
     }
 
     private void TryPickupNearbyChalk()
     {
-        // 2, 3, 4번 슬롯(인덱스 1, 2, 3) 중에서 빈 슬롯 탐색
         int emptySlot = -1;
         for (int i = 1; i < slotDamages.Length; i++)
         {
@@ -428,13 +250,7 @@ public class PlayerController : MonoBehaviour
         {
             slotDamages[emptySlot] = nearestChalk.damage;
             UpdateChalkUI();
-
-            // 만약 현재 방금 주워서 채운 슬롯을 보고 있었다면 손에 분필 즉시 반영
-            if (selectedSlotIndex == emptySlot)
-            {
-                SelectSlot(selectedSlotIndex);
-            }
-
+            if (selectedSlotIndex == emptySlot) SelectSlot(selectedSlotIndex);
             Destroy(nearestChalk.gameObject);
         }
     }
@@ -446,16 +262,274 @@ public class PlayerController : MonoBehaviour
         {
             if (chalkSlots[i] != null)
             {
+                if (i == 0) chalkSlots[i].enabled = true;
+                else chalkSlots[i].enabled = (slotDamages[i] > 0);
+            }
+        }
+    }
+
+    private void ThrowChalk(int damage)
+    {
+        if (chalkPrefab == null) return;
+        Vector3 spawnPos = (throwPoint != null) ? throwPoint.position : transform.position + transform.forward + Vector3.up * 1f;
+        Quaternion spawnRot = (Camera.main != null) ? Camera.main.transform.rotation : transform.rotation;
+
+        GameObject thrownChalkObj = Instantiate(chalkPrefab, spawnPos, spawnRot);
+        Chalk chalkScript = thrownChalkObj.GetComponent<Chalk>();
+        if (chalkScript != null)
+        {
+            chalkScript.damage = damage;
+            chalkScript.chalkPrefab = chalkPrefab; // 👈 정상 반영
+            chalkScript.isThrown = true;
+        }
+    }
+
+    // 🥛 우유 & 제티 초기 스폰 함수
+    private void SpawnInitialItems()
+    {
+        if (milkPrefab != null && milkSpawnPoints != null && milkSpawnPoints.Length > 0)
+        {
+            Instantiate(milkPrefab, milkSpawnPoints[0].position, Quaternion.identity).GetComponent<MilkItem>()?.DropToGround();
+        }
+        if (jetyPrefab != null && jetySpawnPoints != null && jetySpawnPoints.Length > 0)
+        {
+            Instantiate(jetyPrefab, jetySpawnPoints[0].position, Quaternion.identity).GetComponent<MilkItem>()?.DropToGround();
+        }
+    }
+
+    // 🥛 우유/제티 아이템 사용 로직
+    private void UseSelectedItem()
+    {
+        int currentItem = slotItemTypes[selectedSlotIndex];
+        if (currentItem == 0) return;
+
+        if (currentItem == 1) // 우유
+        {
+            maxHp += 1;
+            hp = Mathf.Min(hp + 1, maxHp);
+            UpdateHearts();
+            Debug.Log("🥛 우유를 마셨다! 체력이 1 늘어났다.");
+            RespawnItemAfterDelay(1, 12f);
+        }
+        else if (currentItem == 2) // 제티
+        {
+            Debug.Log("🍫 제티를 먹었다! 그냥 맛있었다.");
+            RespawnItemAfterDelay(2, 12f);
+        }
+        else if (currentItem == 3) // 초코우유
+        {
+            hp = Mathf.Min(hp + 2, maxHp);
+            UpdateHearts();
+            Debug.Log("✨ 초코우유를 마셨다! 체력이 2 회복되었다.");
+            RespawnItemAfterDelay(1, 12f);
+            RespawnItemAfterDelay(2, 12f);
+        }
+
+        slotItemTypes[selectedSlotIndex] = 0;
+        UpdateInventoryUI();
+        SelectSlot(selectedSlotIndex);
+    }
+
+    private void TryCraftChocoMilk()
+    {
+        bool hasMilk = false;
+        bool hasJety = false;
+        int milkIndex = -1;
+        int jetyIndex = -1;
+
+        for (int i = 1; i < slotItemTypes.Length; i++)
+        {
+            if (slotItemTypes[i] == 1) { hasMilk = true; milkIndex = i; }
+            if (slotItemTypes[i] == 2) { hasJety = true; jetyIndex = i; }
+        }
+
+        if (hasMilk && hasJety)
+        {
+            slotItemTypes[milkIndex] = 0;
+            slotItemTypes[jetyIndex] = 3;
+
+            RespawnItemAfterDelay(1, 12f);
+            RespawnItemAfterDelay(2, 12f);
+
+            UpdateInventoryUI();
+            SelectSlot(selectedSlotIndex);
+            Debug.Log("🎉 우유와 제티를 합쳐 '초코우유'를 만들었다!");
+        }
+        else
+        {
+            Debug.Log("⚠️ 인벤토리에 우유와 제티가 모두 있어야 조합할 수 있습니다.");
+        }
+    }
+
+    public void RespawnItemAfterDelay(int itemType, float delay)
+    {
+        StartCoroutine(ItemRespawnRoutine(itemType, delay));
+    }
+
+    private System.Collections.IEnumerator ItemRespawnRoutine(int itemType, float delay)
+    {
+        yield return new WaitForSecondsRealtime(delay);
+
+        GameObject prefabToSpawn = null;
+        Vector3 spawnPos = Vector3.zero;
+
+        if (itemType == 1 && milkPrefab != null)
+        {
+            prefabToSpawn = milkPrefab;
+            spawnPos = (milkSpawnPoints != null && milkSpawnPoints.Length > 0)
+                ? milkSpawnPoints[Random.Range(0, milkSpawnPoints.Length)].position
+                : transform.position + transform.forward * 3f + Vector3.up * 0.5f;
+        }
+        else if (itemType == 2 && jetyPrefab != null)
+        {
+            prefabToSpawn = jetyPrefab;
+            spawnPos = (jetySpawnPoints != null && jetySpawnPoints.Length > 0)
+                ? jetySpawnPoints[Random.Range(0, jetySpawnPoints.Length)].position
+                : transform.position - transform.forward * 3f + Vector3.up * 0.5f;
+        }
+
+        if (prefabToSpawn != null)
+        {
+            GameObject spawnedObj = Instantiate(prefabToSpawn, spawnPos, Quaternion.identity);
+            MilkItem milkScript = spawnedObj.GetComponent<MilkItem>();
+            if (milkScript != null) milkScript.DropToGround();
+            Debug.Log($"⏰ 12초가 지나 아이템(타입: {itemType})이 전용 스폰 위치에 리스폰되었습니다!");
+        }
+    }
+
+    private void TryPickupItem()
+    {
+        int emptySlot = -1;
+        for (int i = 1; i < slotItemTypes.Length; i++)
+        {
+            if (slotItemTypes[i] == 0) { emptySlot = i; break; }
+        }
+        if (emptySlot == -1) return;
+
+        Collider[] hitColliders = Physics.OverlapSphere(transform.position, pickupRadius);
+        foreach (var col in hitColliders)
+        {
+            MilkItem item = col.GetComponent<MilkItem>();
+            if (item != null && item.CanPickUp())
+            {
+                slotItemTypes[emptySlot] = item.itemType;
+                UpdateInventoryUI();
+                if (selectedSlotIndex == emptySlot) SelectSlot(selectedSlotIndex);
+                Destroy(col.gameObject);
+                break;
+            }
+        }
+    }
+
+    private void SelectSlot(int slotIndex)
+    {
+        selectedSlotIndex = slotIndex;
+        bool isFirstSlot = (selectedSlotIndex == 0);
+        int itemType = slotItemTypes[selectedSlotIndex];
+
+        if (swordTransform != null) swordTransform.gameObject.SetActive(isFirstSlot);
+        if (swordObject != null) swordObject.SetActive(isFirstSlot);
+        if (shieldObject != null) shieldObject.SetActive(isFirstSlot);
+
+        if (milkInHandObject) milkInHandObject.SetActive(!isFirstSlot && itemType == 1);
+        if (jetyInHandObject) jetyInHandObject.SetActive(!isFirstSlot && itemType == 2);
+        if (chocoMilkInHandObject) chocoMilkInHandObject.SetActive(!isFirstSlot && itemType == 3);
+
+        if (!isFirstSlot) isBlocking = false;
+    }
+
+    private void UpdateInventoryUI()
+    {
+        if (slotIcons == null) return;
+        for (int i = 0; i < slotIcons.Length; i++)
+        {
+            if (slotIcons[i] != null)
+            {
                 if (i == 0)
                 {
-                    chalkSlots[i].enabled = true; // 1번 칸은 항상 켜둠 (검&방패 아이콘)
+                    slotIcons[i].enabled = true;
                 }
                 else
                 {
-                    chalkSlots[i].enabled = (slotDamages[i] > 0); // 분필이 있을 때만 UI 켜기
+                    int itemType = slotItemTypes[i];
+                    if (itemType == 0)
+                    {
+                        slotIcons[i].enabled = false;
+                        slotIcons[i].sprite = null;
+                    }
+                    else
+                    {
+                        slotIcons[i].enabled = true;
+                        if (itemType == 1 && milkIconSprite != null) slotIcons[i].sprite = milkIconSprite;
+                        else if (itemType == 2 && jetyIconSprite != null) slotIcons[i].sprite = jetyIconSprite;
+                        else if (itemType == 3 && chocoMilkIconSprite != null) slotIcons[i].sprite = chocoMilkIconSprite;
+                    }
                 }
             }
         }
+    }
+
+    private System.Collections.IEnumerator SwordAttackRoutine()
+    {
+        isAttacking = true;
+        lastAttackTime = Time.time;
+        if (swordTransform != null) StartCoroutine(SwordSwingMotion());
+
+        Vector3 attackOrigin = transform.position + Vector3.up * 1.0f;
+        RaycastHit[] hits = Physics.SphereCastAll(attackOrigin, 0.8f, transform.forward, swordAttackRange);
+
+        foreach (var hit in hits)
+        {
+            if (hit.collider.CompareTag("Monster"))
+            {
+                Monster monster = hit.collider.GetComponent<Monster>();
+                if (monster != null) monster.TakeDamage(swordDamage);
+            }
+        }
+        yield return new WaitForSeconds(attackDelay);
+        isAttacking = false;
+    }
+
+    private System.Collections.IEnumerator SwordSwingMotion()
+    {
+        Vector3 originalPos = swordTransform.localPosition;
+        Quaternion originalRot = swordTransform.localRotation;
+        Vector3 targetPos = originalPos + new Vector3(0.2f, -0.1f, 0.6f);
+        Quaternion targetRot = originalRot * Quaternion.Euler(20f, -40f, -30f);
+
+        float elapsed = 0f;
+        while (elapsed < 0.15f)
+        {
+            elapsed += Time.deltaTime;
+            swordTransform.localPosition = Vector3.Lerp(originalPos, targetPos, elapsed / 0.15f);
+            swordTransform.localRotation = Quaternion.Slerp(originalRot, targetRot, elapsed / 0.15f);
+            yield return null;
+        }
+        elapsed = 0f;
+        while (elapsed < 0.25f)
+        {
+            elapsed += Time.deltaTime;
+            swordTransform.localPosition = Vector3.Lerp(targetPos, originalPos, elapsed / 0.25f);
+            swordTransform.localRotation = Quaternion.Slerp(targetRot, originalRot, elapsed / 0.25f);
+            yield return null;
+        }
+        swordTransform.localPosition = originalPos;
+        swordTransform.localRotation = originalRot;
+    }
+
+    public void TakeDamage(int damage)
+    {
+        if (hp <= 0 || isInvincible) return;
+        if (isBlocking)
+        {
+            int blockedDamage = Mathf.RoundToInt(damage * (1f - guardDamageReduction));
+            if (blockedDamage <= 0) return;
+            damage = blockedDamage;
+        }
+        hp -= damage;
+        currentHp = hp;
+        UpdateHearts();
+        if (hp <= 0) GameOver();
     }
 
     private void UpdateHearts()
@@ -466,17 +540,8 @@ public class PlayerController : MonoBehaviour
 
     private void GameOver()
     {
-        // 게임 오버 패널이 연결되어 있다면 활성화
-        if (gameOverPanel != null)
-        {
-            gameOverPanel.SetActive(true);
-        }
-
-        // 시간 정지 및 마우스 커서 해제
         Time.timeScale = 0f;
         Cursor.lockState = CursorLockMode.None;
         Cursor.visible = true;
-
-        Debug.Log("💀 게임 오버!");
     }
 }
