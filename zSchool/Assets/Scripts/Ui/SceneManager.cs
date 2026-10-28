@@ -26,9 +26,7 @@ public class SceneChanger : MonoBehaviour
                 }
                 else
                 {
-                    Time.timeScale = 1f;
-                    Cursor.lockState = CursorLockMode.Locked;
-                    Cursor.visible = false;
+                    CloseSettingPanel();
                 }
             }
         }
@@ -40,23 +38,17 @@ public class SceneChanger : MonoBehaviour
         SceneManager.LoadScene("GameScene");
     }
 
-    // 🔄 [Retry 버튼 기능] 현재 씬(게임 씬)을 다시 로드하여 처음부터 재시작
     public void Retry()
     {
-        Time.timeScale = 1f; // 시간 정지 해제
-
-        // 현재 활성화된 씬의 이름을 가져와서 다시 로드합니다.
+        Time.timeScale = 1f;
         string currentSceneName = SceneManager.GetActiveScene().name;
         SceneManager.LoadScene(currentSceneName);
-
-        // 혹은 씬 이름이 확실하다면 직접 적어도 됩니다: SceneManager.LoadScene("GameScene");
     }
 
-    // 🚪 [Quit 버튼 기능] 메인 화면 씬으로 이동
     public void QuitToMain()
     {
-        Time.timeScale = 1f; // 시간 정지 해제
-        SceneManager.LoadScene("MainScene"); // 메인 화면 씬 이름 (실제 메인 씬 이름으로 변경하세요)
+        Time.timeScale = 1f;
+        SceneManager.LoadScene("MainScene");
     }
 
     public void Setting()
@@ -67,12 +59,37 @@ public class SceneChanger : MonoBehaviour
         Cursor.visible = true;
     }
 
+    // ❌ [X 버튼이나 닫기 버튼을 눌렀을 때 연결]
     public void Close()
     {
-        settingPanel.SetActive(false);
+        CloseSettingPanel();
+    }
+
+    // 🛠️ [핵심] 씬에 따라 마우스 커서 상태를 다르게 처리하는 함수
+    private void CloseSettingPanel()
+    {
+        if (settingPanel != null)
+        {
+            settingPanel.SetActive(false);
+        }
+
         Time.timeScale = 1f;
-        Cursor.lockState = CursorLockMode.Locked;
-        Cursor.visible = false;
+
+        // 현재 씬 이름 가져오기
+        string currentSceneName = SceneManager.GetActiveScene().name;
+
+        if (currentSceneName == "MainScene")
+        {
+            // 🌟 메인 화면에서는 설정창을 닫아도 마우스가 자유롭게 보이게 유지
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
+        }
+        else
+        {
+            // 🎮 게임 씬에서는 플레이어 시점 조작을 위해 마우스 잠금 및 숨김
+            Cursor.lockState = CursorLockMode.Locked;
+            Cursor.visible = false;
+        }
     }
 
     public void GameExit() => Application.Quit();
